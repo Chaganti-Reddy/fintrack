@@ -256,48 +256,41 @@ const FinanceTracker = () => {
     e.preventDefault();
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) {
-      console.error('User is not authenticated');
+      alert("Not authenticated");
       return;
     }
 
-    try {
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: session.user.email,
-        password: deletePassword
-      });
+    // Optional: verify password before delete
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: session.user.email,
+      password: deletePassword
+    });
 
-      if (signInError) {
-        console.error('Error verifying password:', signInError);
-        alert('Incorrect password. Please try again.');
-        return;
-      }
+    if (signInError) {
+      alert("Incorrect password");
+      return;
+    }
 
-      const filePath = `${session.user.id}/${session.user.id}/profile-picture.png`;
-      const { error: deleteError } = await supabase.storage
-        .from('profile-pictures')
-        .remove([filePath]);
+    const res = await fetch("/.netlify/functions/delete-user", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ user_id: session.user.id }),
+    });
 
-      if (deleteError) {
-        console.error('Error deleting profile picture:', deleteError);
-      }
+    const result = await res.json();
 
-      const { error: deleteUserError } = await supabase.auth.admin.deleteUser(session.user.id);
-
-      if (deleteUserError) {
-        console.error('Error deleting user:', deleteUserError);
-        alert('Error deleting user: ' + deleteUserError.message);
-      } else {
-        setSuccessMessage('Account deleted successfully!');
-        setShowSuccessDialog(true);
-        setIsAuthenticated(false);
-        setUser(null);
-        setShowDeleteAccount(false);
-      }
-    } catch (error) {
-      console.error('Unexpected error:', error);
-      alert('An unexpected error occurred. Please try again.');
+    if (res.ok) {
+      await supabase.auth.signOut();
+      setIsAuthenticated(false);
+      setUser(null);
+      setShowDeleteAccount(false);
+      setSuccessMessage("Your account and all data were deleted.");
+      setShowSuccessDialog(true);
+    } else {
+      alert("Delete failed: " + result.error);
     }
   };
+
 
 
   const handleAddTransaction = async (e) => {
