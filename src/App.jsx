@@ -881,7 +881,7 @@ const FinanceTracker = () => {
                   ))}
                 </div>
               ) : (
-                <div className="flex items-center justify-center h-64 w-full">
+                <div className="flex items-center justify-center h-40 w-full">
                   <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
                     No transactions available.
                   </p>
