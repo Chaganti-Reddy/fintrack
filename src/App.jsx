@@ -44,6 +44,7 @@ const FinanceTracker = () => {
     confirmPassword: ''
   });
   const [message, setMessage] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
   const [profilePicUrl, setProfilePicUrl] = useState('');
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -149,7 +150,6 @@ const FinanceTracker = () => {
       .eq('user_id', session.user.id)
       .order('date', { ascending: false })
       .order('created_at', { ascending: false });
-
     if (error) {
       console.error('Error fetching transactions:', error);
     } else {
@@ -162,7 +162,6 @@ const FinanceTracker = () => {
       .from('goals')
       .select('*')
       .eq('user_id', userId);
-
     if (error) {
       console.error('Error fetching goals:', error);
     } else {
@@ -177,13 +176,11 @@ const FinanceTracker = () => {
         .storage
         .from('profile-pictures')
         .getPublicUrl(filePath);
-
       if (error) {
         console.error('Error getting public URL:', error);
         setProfilePicUrl('');
         return;
       }
-
       const response = await fetch(publicUrl);
       if (!response.ok) {
         throw new Error('Image not found');
@@ -197,9 +194,11 @@ const FinanceTracker = () => {
 
   const handleAuth = async (e) => {
     e.preventDefault();
+    setErrorMessage(''); // Reset error message
+
     if (authMode === 'register') {
       if (authData.password !== authData.confirmPassword) {
-        alert('Passwords do not match');
+        setErrorMessage('Passwords do not match');
         return;
       }
       const { data, error } = await supabase.auth.signUp({
@@ -212,7 +211,7 @@ const FinanceTracker = () => {
         }
       });
       if (error) {
-        console.error('Error signing up:', error);
+        setErrorMessage(error.message || 'Error signing up');
       } else {
         setMessage('Please check your email for verification and then log in.');
         setAuthMode('login');
@@ -223,7 +222,7 @@ const FinanceTracker = () => {
         password: authData.password
       });
       if (error) {
-        console.error('Error signing in:', error);
+        setErrorMessage(error.message || 'Invalid login details');
       } else {
         setIsAuthenticated(true);
         setUser(data.user);
@@ -259,26 +258,21 @@ const FinanceTracker = () => {
       alert("Not authenticated");
       return;
     }
-
     // Optional: verify password before delete
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: session.user.email,
       password: deletePassword
     });
-
     if (signInError) {
       alert("Incorrect password");
       return;
     }
-
     const res = await fetch("/.netlify/functions/delete-user", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: session.user.id }),
     });
-
     const result = await res.json();
-
     if (res.ok) {
       await supabase.auth.signOut();
       setIsAuthenticated(false);
@@ -290,8 +284,6 @@ const FinanceTracker = () => {
       alert("Delete failed: " + result.error);
     }
   };
-
-
 
   const handleAddTransaction = async (e) => {
     e.preventDefault();
@@ -587,7 +579,6 @@ const FinanceTracker = () => {
   };
 
   const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1', '#d084d0'];
-
   const months = [
     { value: '01', label: 'January' },
     { value: '02', label: 'February' },
@@ -616,9 +607,13 @@ const FinanceTracker = () => {
               <p className="text-white/70">Manage your finances with style</p>
             </div>
             {message && <p className="text-green-400 text-center mb-4">{message}</p>}
+            {errorMessage && <p className="text-red-500 text-center mb-4">{errorMessage}</p>}
             <div className="flex bg-white/10 rounded-full p-1 mb-6">
               <button
-                onClick={() => setAuthMode('login')}
+                onClick={() => {
+                  setAuthMode('login');
+                  setErrorMessage('');
+                }}
                 className={`flex-1 py-2 px-4 rounded-full text-sm font-medium transition-all ${authMode === 'login'
                   ? 'bg-white text-purple-900 shadow-lg'
                   : 'text-white/70 hover:text-white'
@@ -627,7 +622,10 @@ const FinanceTracker = () => {
                 Login
               </button>
               <button
-                onClick={() => setAuthMode('register')}
+                onClick={() => {
+                  setAuthMode('register');
+                  setErrorMessage('');
+                }}
                 className={`flex-1 py-2 px-4 rounded-full text-sm font-medium transition-all ${authMode === 'register'
                   ? 'bg-white text-purple-900 shadow-lg'
                   : 'text-white/70 hover:text-white'
