@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { User, DollarSign, TrendingUp, TrendingDown, Calendar, Plus, Settings, LogOut, Eye, EyeOff, Trash2, Upload, Target, ChevronLeft, ChevronRight } from 'lucide-react';
+import {
+  User, DollarSign, TrendingUp, TrendingDown, Calendar, Plus, Settings, LogOut, Eye, EyeOff,
+  Trash2, Upload, Target, ChevronLeft, ChevronRight, PiggyBank, CreditCard,
+  Landmark, Wallet
+} from 'lucide-react';
+
 import { supabase } from './supabase';
 
 const SuccessDialog = ({ message, onClose }) => (
@@ -313,13 +318,11 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
-
     const allowedTypes = ['income', 'expense', 'savings', 'loan'];
     if (!allowedTypes.includes(transactionData.type)) {
       console.error('Invalid transaction type');
       return;
     }
-
     if (transactionData.type === 'savings') {
       const loanBalance = calculateLoanBalance();
       const savingsAmount = parseFloat(transactionData.savings);
@@ -333,7 +336,6 @@ const FinanceTracker = () => {
         return;
       }
     }
-
     if (transactionData.type === 'loan') {
       if (transactionData.loanAction === 'take') {
         if (transactionData.personType === 'new') {
@@ -347,7 +349,6 @@ const FinanceTracker = () => {
               remaining_amount: parseFloat(transactionData.amount)
             }])
             .select();
-
           if (loanError) {
             console.error('Error adding loan:', loanError);
             setErrorMessage('Error adding loan: ' + loanError.message);
@@ -359,7 +360,6 @@ const FinanceTracker = () => {
             setErrorMessage('Selected loan not found.');
             return;
           }
-
           const { error: loanError } = await supabase
             .from('loans')
             .update({
@@ -368,27 +368,11 @@ const FinanceTracker = () => {
               description: transactionData.description
             })
             .eq('id', selectedLoan.id);
-
           if (loanError) {
             console.error('Error updating loan:', loanError);
             setErrorMessage('Error updating loan: ' + loanError.message);
             return;
           }
-          setShowAddTransaction(false);
-          setTransactionData({
-            type: 'expense',
-            amount: '',
-            description: '',
-            category: '',
-            date: selectedDate,
-            savings: 0,
-            loanAction: '',
-            loanName: '',
-            loanId: '',
-            personType: 'new'
-          });
-          fetchLoans(session.user.id);
-          return;
         }
       } else if (transactionData.loanAction === 'clear') {
         const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
@@ -396,46 +380,27 @@ const FinanceTracker = () => {
           setErrorMessage('Selected loan not found.');
           return;
         }
-
         const clearAmount = parseFloat(transactionData.amount);
         if (clearAmount > selectedLoan.remaining_amount) {
           setErrorMessage('Clear amount exceeds remaining loan amount.');
           return;
         }
-
         const { error: loanError } = await supabase
           .from('loans')
           .update({
             remaining_amount: selectedLoan.remaining_amount - clearAmount
           })
           .eq('id', selectedLoan.id);
-
         if (loanError) {
           console.error('Error updating loan:', loanError);
           setErrorMessage('Error updating loan: ' + loanError.message);
           return;
         }
-        setShowAddTransaction(false);
-        setTransactionData({
-          type: 'expense',
-          amount: '',
-          description: '',
-          category: '',
-          date: selectedDate,
-          savings: 0,
-          loanAction: '',
-          loanName: '',
-          loanId: '',
-          personType: 'new'
-        });
-        fetchLoans(session.user.id);
-        return;
       }
+      await fetchLoans(session.user.id);
     }
 
-    // Prepare transaction data without loan-specific fields
     const { loanAction, loanName, loanId, personType, ...transactionToInsert } = transactionData;
-
     const { data, error } = await supabase
       .from('transactions')
       .insert([{
@@ -468,6 +433,7 @@ const FinanceTracker = () => {
       });
       setShowAddTransaction(false);
       setErrorMessage('');
+      await fetchLoans(session.user.id);
     }
   };
 
@@ -849,7 +815,7 @@ const FinanceTracker = () => {
   const completedGoals = goals.filter(goal => goal.status === 'completed').length;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
+    <div className="min-h-screen overflow-x-hidden bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900">
       <nav className="bg-white/10 backdrop-blur-xl border-b border-white/20 px-6 py-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center space-x-4">
@@ -979,7 +945,7 @@ const FinanceTracker = () => {
                   <p className="text-2xl font-bold text-blue-400">${stats.savings.toLocaleString()}</p>
                 </div>
                 <div className="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center">
-                  <DollarSign className="w-6 h-6 text-blue-400" />
+                  <PiggyBank className="w-6 h-6 text-blue-400" />
                 </div>
               </div>
             </div>
@@ -992,7 +958,7 @@ const FinanceTracker = () => {
                   </p>
                 </div>
                 <div className="w-12 h-12 bg-blue-500/20 rounded-full flex items-center justify-center">
-                  <DollarSign className="w-6 h-6 text-blue-400" />
+                  <Wallet className="w-6 h-6 text-blue-400" />
                 </div>
               </div>
             </div>
@@ -1003,7 +969,7 @@ const FinanceTracker = () => {
                   <p className="text-2xl font-bold text-yellow-400">${calculateLoanBalance().toLocaleString()}</p>
                 </div>
                 <div className="w-12 h-12 bg-yellow-500/20 rounded-full flex items-center justify-center">
-                  <DollarSign className="w-6 h-6 text-yellow-400" />
+                  <Landmark className="w-6 h-6 text-yellow-400" />
                 </div>
               </div>
             </div>
@@ -1020,29 +986,28 @@ const FinanceTracker = () => {
                 </button>
               </div>
               {stats.filtered.filter(transaction => transaction.type !== 'loan').length > 0 ? (
-                <div className="space-y-3">
-                  {stats.filtered.filter(transaction => transaction.type !== 'loan').map(transaction => (
-                    <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : 'bg-red-500/20'}`}>
-                          {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <DollarSign className="w-5 h-5 text-blue-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
+                <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                  {stats.filtered
+                    .filter(transaction => transaction.type !== 'loan')
+                    .slice(0, 7)
+                    .map(transaction => (
+                      <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
+                        <div className="flex items-center space-x-3">
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : 'bg-red-500/20'}`}>
+                            {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <PiggyBank className="w-5 h-5 text-blue-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
+                          </div>
+                          <div>
+                            <p className="text-white font-medium">{transaction.description}</p>
+                            <p className="text-white/70 text-sm">{transaction.date}</p>
+                          </div>
                         </div>
-                        <div>
-                          <p className="text-white font-medium">
-                            {transaction.description}
-                          </p>
-                          <p className="text-white/70 text-sm">{transaction.date}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
                         <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' : transaction.type === 'savings' ? 'text-blue-400' : 'text-red-400'}`}>
                           {transaction.type === 'income' ? '+' : ''}
                           {transaction.type === 'savings' ? 'S: ' : ''}
                           ${transaction.type === 'savings' ? transaction.savings.toLocaleString() : Math.abs(transaction.amount).toLocaleString()}
                         </p>
                       </div>
-                    </div>
-                  ))}
+                    ))}
                 </div>
               ) : (
                 <div className="flex items-center justify-center h-40 w-full">
@@ -1221,6 +1186,42 @@ const FinanceTracker = () => {
                 <div className="flex items-center justify-center h-64 w-full">
                   <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
                     No income data available.
+                  </p>
+                </div>
+              )}
+            </div>
+            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
+              <h3 className="text-xl font-bold text-white mb-4">Loan Details</h3>
+              {loans.length > 0 ? (
+                <div className="space-y-4 max-h-64 overflow-y-auto">
+                  {loans.map((loan) => {
+                    const percentageCleared = ((loan.total_amount - loan.remaining_amount) / loan.total_amount * 100).toFixed(2);
+                    return (
+                      <div key={loan.id} className="p-4 bg-white/5 rounded-2xl">
+                        <div className="flex justify-between items-center">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                              <CreditCard className="w-5 h-5 text-yellow-400" />
+                            </div>
+                            <div>
+                              <p className="text-white font-medium">{loan.name}</p>
+                              <p className="text-white/70 text-sm">{loan.description}</p>
+                            </div>
+                          </div>
+                          <div>
+                            <p className="text-yellow-400 font-medium">
+                              ${loan.remaining_amount.toLocaleString()} <span className="text-white/70">({percentageCleared}% cleared)</span>
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-64 w-full">
+                  <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
+                    No loans available.
                   </p>
                 </div>
               )}
@@ -1744,7 +1745,7 @@ const FinanceTracker = () => {
                 placeholder="Full Name"
                 value={accountData.name}
                 onChange={(e) => setAccountData({ ...accountData, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"c
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
                 required
               />
               <input
