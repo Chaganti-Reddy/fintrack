@@ -1744,7 +1744,7 @@ const FinanceTracker = () => {
                 placeholder="Full Name"
                 value={accountData.name}
                 onChange={(e) => setAccountData({ ...accountData, name: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"c
                 required
               />
               <input
