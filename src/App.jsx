@@ -80,9 +80,12 @@ const FinanceTracker = () => {
     category: '',
     date: new Date().toISOString().split('T')[0],
     savings: '',
-    loanAction: ''
+    loanAction: '',
+    loanName: '',
+    loanId: '',
+    personType: 'new'
   });
-
+  const [loans, setLoans] = useState([]);
   const fileInputRef = useRef(null);
 
   const handleKeyDown = useCallback((event) => {
@@ -129,6 +132,7 @@ const FinanceTracker = () => {
         });
         fetchProfilePicture(session.user.id);
         fetchGoals(session.user.id);
+        fetchLoans(session.user.id);
       }
     };
     checkSession();
@@ -168,6 +172,18 @@ const FinanceTracker = () => {
       console.error('Error fetching goals:', error);
     } else {
       setGoals(data);
+    }
+  };
+
+  const fetchLoans = async (userId) => {
+    const { data, error } = await supabase
+      .from('loans')
+      .select('*')
+      .eq('user_id', userId);
+    if (error) {
+      console.error('Error fetching loans:', error);
+    } else {
+      setLoans(data);
     }
   };
 
@@ -236,6 +252,7 @@ const FinanceTracker = () => {
         });
         fetchProfilePicture(data.user.id);
         fetchGoals(data.user.id);
+        fetchLoans(data.user.id);
       }
     }
   };
@@ -286,9 +303,7 @@ const FinanceTracker = () => {
   };
 
   const calculateLoanBalance = () => {
-    const loanTransactions = transactions.filter(t => t.type === 'loan');
-    const loanBalance = loanTransactions.reduce((sum, t) => sum + t.amount, 0);
-    return Math.abs(loanBalance);
+    return loans.reduce((sum, loan) => sum + loan.remaining_amount, 0);
   };
 
   const handleAddTransaction = async (e) => {
@@ -298,11 +313,13 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
+
     const allowedTypes = ['income', 'expense', 'savings', 'loan'];
     if (!allowedTypes.includes(transactionData.type)) {
       console.error('Invalid transaction type');
       return;
     }
+
     if (transactionData.type === 'savings') {
       const loanBalance = calculateLoanBalance();
       const savingsAmount = parseFloat(transactionData.savings);
@@ -316,32 +333,127 @@ const FinanceTracker = () => {
         return;
       }
     }
-    let newTransaction = {
-      ...transactionData,
-      amount: transactionData.type === 'savings'
-        ? parseFloat(transactionData.savings)
-        : parseFloat(transactionData.amount),
-      savings: transactionData.type === 'savings'
-        ? parseFloat(transactionData.savings)
-        : 0,
-      category: transactionData.type === 'savings' && !transactionData.category
-        ? 'Savings'
-        : transactionData.category,
-      user_id: session.user.id,
-    };
+
     if (transactionData.type === 'loan') {
-      const amount = parseFloat(transactionData.amount);
-      newTransaction.amount = transactionData.loanAction === 'take' ? -Math.abs(amount) : Math.abs(amount);
+      if (transactionData.loanAction === 'take') {
+        if (transactionData.personType === 'new') {
+          const { data: loanData, error: loanError } = await supabase
+            .from('loans')
+            .insert([{
+              user_id: session.user.id,
+              name: transactionData.loanName,
+              description: transactionData.description,
+              total_amount: parseFloat(transactionData.amount),
+              remaining_amount: parseFloat(transactionData.amount)
+            }])
+            .select();
+
+          if (loanError) {
+            console.error('Error adding loan:', loanError);
+            setErrorMessage('Error adding loan: ' + loanError.message);
+            return;
+          }
+        } else {
+          const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
+          if (!selectedLoan) {
+            setErrorMessage('Selected loan not found.');
+            return;
+          }
+
+          const { error: loanError } = await supabase
+            .from('loans')
+            .update({
+              total_amount: selectedLoan.total_amount + parseFloat(transactionData.amount),
+              remaining_amount: selectedLoan.remaining_amount + parseFloat(transactionData.amount),
+              description: transactionData.description
+            })
+            .eq('id', selectedLoan.id);
+
+          if (loanError) {
+            console.error('Error updating loan:', loanError);
+            setErrorMessage('Error updating loan: ' + loanError.message);
+            return;
+          }
+          setShowAddTransaction(false);
+          setTransactionData({
+            type: 'expense',
+            amount: '',
+            description: '',
+            category: '',
+            date: selectedDate,
+            savings: 0,
+            loanAction: '',
+            loanName: '',
+            loanId: '',
+            personType: 'new'
+          });
+          fetchLoans(session.user.id);
+          return;
+        }
+      } else if (transactionData.loanAction === 'clear') {
+        const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
+        if (!selectedLoan) {
+          setErrorMessage('Selected loan not found.');
+          return;
+        }
+
+        const clearAmount = parseFloat(transactionData.amount);
+        if (clearAmount > selectedLoan.remaining_amount) {
+          setErrorMessage('Clear amount exceeds remaining loan amount.');
+          return;
+        }
+
+        const { error: loanError } = await supabase
+          .from('loans')
+          .update({
+            remaining_amount: selectedLoan.remaining_amount - clearAmount
+          })
+          .eq('id', selectedLoan.id);
+
+        if (loanError) {
+          console.error('Error updating loan:', loanError);
+          setErrorMessage('Error updating loan: ' + loanError.message);
+          return;
+        }
+        setShowAddTransaction(false);
+        setTransactionData({
+          type: 'expense',
+          amount: '',
+          description: '',
+          category: '',
+          date: selectedDate,
+          savings: 0,
+          loanAction: '',
+          loanName: '',
+          loanId: '',
+          personType: 'new'
+        });
+        fetchLoans(session.user.id);
+        return;
+      }
     }
-    const { loanAction, ...transactionToInsert } = newTransaction;
+
+    // Prepare transaction data without loan-specific fields
+    const { loanAction, loanName, loanId, personType, ...transactionToInsert } = transactionData;
+
     const { data, error } = await supabase
       .from('transactions')
-      .insert([transactionToInsert]);
+      .insert([{
+        ...transactionToInsert,
+        amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
+        savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
+        user_id: session.user.id,
+      }]);
+
     if (error) {
       console.error('Error adding transaction:', error);
       setErrorMessage('Error adding transaction: ' + error.message);
     } else {
-      setTransactions([transactionToInsert, ...transactions]);
+      setTransactions([{
+        ...transactionToInsert,
+        amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
+        savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
+      }, ...transactions]);
       setTransactionData({
         type: 'expense',
         amount: '',
@@ -349,7 +461,10 @@ const FinanceTracker = () => {
         category: '',
         date: selectedDate,
         savings: 0,
-        loanAction: ''
+        loanAction: '',
+        loanName: '',
+        loanId: '',
+        personType: 'new'
       });
       setShowAddTransaction(false);
       setErrorMessage('');
@@ -607,6 +722,7 @@ const FinanceTracker = () => {
   };
 
   const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1', '#d084d0'];
+
   const months = [
     { value: '01', label: 'January' },
     { value: '02', label: 'February' },
@@ -903,34 +1019,26 @@ const FinanceTracker = () => {
                   <Plus size={24} />
                 </button>
               </div>
-              {stats.filtered.length > 0 ? (
+              {stats.filtered.filter(transaction => transaction.type !== 'loan').length > 0 ? (
                 <div className="space-y-3">
-                  {stats.filtered.map(transaction => (
+                  {stats.filtered.filter(transaction => transaction.type !== 'loan').map(transaction => (
                     <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
                       <div className="flex items-center space-x-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : transaction.type === 'loan' ? 'bg-yellow-500/20' : 'bg-red-500/20'}`}>
-                          {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <DollarSign className="w-5 h-5 text-blue-400" /> : transaction.type === 'loan' ? <DollarSign className="w-5 h-5 text-yellow-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : 'bg-red-500/20'}`}>
+                          {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <DollarSign className="w-5 h-5 text-blue-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
                         </div>
                         <div>
                           <p className="text-white font-medium">
-                            {transaction.type === 'loan' ? (transaction.amount < 0 ? `Loan from ${transaction.description}` : `Loan Cleared to ${transaction.description}`) : transaction.description}
+                            {transaction.description}
                           </p>
                           <p className="text-white/70 text-sm">{transaction.date}</p>
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' :
-                          transaction.type === 'savings' ? 'text-blue-400' :
-                            transaction.type === 'loan' && transaction.amount > 0 ? 'text-green-400' :
-                              transaction.type === 'loan' && transaction.amount < 0 ? 'text-red-400' :
-                                'text-red-400'
-                          }`}>
+                        <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' : transaction.type === 'savings' ? 'text-blue-400' : 'text-red-400'}`}>
                           {transaction.type === 'income' ? '+' : ''}
                           {transaction.type === 'savings' ? 'S: ' : ''}
-                          {transaction.type === 'loan' ? (transaction.amount > 0 ? 'Clear: ' : 'Take: ') : ''}
-                          ${transaction.type === 'savings'
-                            ? transaction.savings.toLocaleString()
-                            : Math.abs(transaction.amount).toLocaleString()}
+                          ${transaction.type === 'savings' ? transaction.savings.toLocaleString() : Math.abs(transaction.amount).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -1306,24 +1414,6 @@ const FinanceTracker = () => {
               )}
               {transactionData.type === 'loan' && (
                 <>
-                  <input
-                    type="number"
-                    placeholder="Loan Amount"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={transactionData.amount}
-                    onChange={(e) => setTransactionData({ ...transactionData, amount: e.target.value })}
-                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                    required
-                  />
-                  <input
-                    type="text"
-                    placeholder="Person Name"
-                    value={transactionData.description}
-                    onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
-                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                    required
-                  />
                   <select
                     value={transactionData.loanAction}
                     onChange={(e) => setTransactionData({ ...transactionData, loanAction: e.target.value })}
@@ -1334,16 +1424,98 @@ const FinanceTracker = () => {
                     <option value="take">Take Loan</option>
                     <option value="clear">Clear Loan</option>
                   </select>
+                  {transactionData.loanAction === 'take' && (
+                    <>
+                      <select
+                        value={transactionData.personType}
+                        onChange={(e) => setTransactionData({ ...transactionData, personType: e.target.value })}
+                        className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        required
+                      >
+                        <option value="new">New Person</option>
+                        <option value="existing">Existing Person</option>
+                      </select>
+                      {transactionData.personType === 'new' ? (
+                        <input
+                          type="text"
+                          placeholder="Loan Name"
+                          value={transactionData.loanName}
+                          onChange={(e) => setTransactionData({ ...transactionData, loanName: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                          required
+                        />
+                      ) : (
+                        <select
+                          value={transactionData.loanId}
+                          onChange={(e) => setTransactionData({ ...transactionData, loanId: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                          required
+                        >
+                          <option value="">Select Person</option>
+                          {loans.map(loan => (
+                            <option key={loan.id} value={loan.id}>
+                              {loan.name}
+                            </option>
+                          ))}
+                        </select>
+                      )}
+                      <input
+                        type="text"
+                        placeholder="Reason for Loan"
+                        value={transactionData.description}
+                        onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
+                        className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        required
+                      />
+                      <input
+                        type="number"
+                        placeholder="Loan Amount"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={transactionData.amount}
+                        onChange={(e) => setTransactionData({ ...transactionData, amount: e.target.value })}
+                        className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        required
+                      />
+                    </>
+                  )}
+                  {transactionData.loanAction === 'clear' && (
+                    <>
+                      <select
+                        value={transactionData.loanId}
+                        onChange={(e) => setTransactionData({ ...transactionData, loanId: e.target.value })}
+                        className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                        required
+                      >
+                        <option value="">Select Loan</option>
+                        {loans.filter(loan => loan.remaining_amount > 0).map(loan => (
+                          <option key={loan.id} value={loan.id}>
+                            {loan.name}
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        placeholder="Amount to Clear"
+                        value={transactionData.amount}
+                        onChange={(e) => setTransactionData({ ...transactionData, amount: e.target.value })}
+                        className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        required
+                      />
+                    </>
+                  )}
                 </>
               )}
-              <input
-                type="text"
-                placeholder="Description"
-                value={transactionData.description}
-                onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
-                className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
-                required
-              />
+              {transactionData.type !== 'loan' && (
+                <input
+                  type="text"
+                  placeholder="Description"
+                  value={transactionData.description}
+                  onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
+                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                  required
+                />
+              )}
               {transactionData.type !== 'savings' && transactionData.type !== 'loan' && (
                 <select
                   value={transactionData.category}
