@@ -79,8 +79,10 @@ const FinanceTracker = () => {
     description: '',
     category: '',
     date: new Date().toISOString().split('T')[0],
-    savings: ''
+    savings: '',
+    loanAction: ''
   });
+
   const fileInputRef = useRef(null);
 
   const handleKeyDown = useCallback((event) => {
@@ -194,8 +196,7 @@ const FinanceTracker = () => {
 
   const handleAuth = async (e) => {
     e.preventDefault();
-    setErrorMessage(''); // Reset error message
-
+    setErrorMessage('');
     if (authMode === 'register') {
       if (authData.password !== authData.confirmPassword) {
         setErrorMessage('Passwords do not match');
@@ -258,7 +259,6 @@ const FinanceTracker = () => {
       alert("Not authenticated");
       return;
     }
-    // Optional: verify password before delete
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: session.user.email,
       password: deletePassword
@@ -285,6 +285,12 @@ const FinanceTracker = () => {
     }
   };
 
+  const calculateLoanBalance = () => {
+    const loanTransactions = transactions.filter(t => t.type === 'loan');
+    const loanBalance = loanTransactions.reduce((sum, t) => sum + t.amount, 0);
+    return Math.abs(loanBalance);
+  };
+
   const handleAddTransaction = async (e) => {
     e.preventDefault();
     const { data: { session } } = await supabase.auth.getSession();
@@ -292,12 +298,25 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
-    const allowedTypes = ['income', 'expense', 'savings'];
+    const allowedTypes = ['income', 'expense', 'savings', 'loan'];
     if (!allowedTypes.includes(transactionData.type)) {
       console.error('Invalid transaction type');
       return;
     }
-    const newTransaction = {
+    if (transactionData.type === 'savings') {
+      const loanBalance = calculateLoanBalance();
+      const savingsAmount = parseFloat(transactionData.savings);
+      const balanceAfterSavings = stats.balance - savingsAmount;
+      if (balanceAfterSavings - loanBalance < 0) {
+        setErrorMessage('You have loans to clear. Please clear them first to make savings.');
+        return;
+      }
+      if (savingsAmount > stats.balance) {
+        setErrorMessage('Savings amount should be less than the current balance.');
+        return;
+      }
+    }
+    let newTransaction = {
       ...transactionData,
       amount: transactionData.type === 'savings'
         ? parseFloat(transactionData.savings)
@@ -310,22 +329,30 @@ const FinanceTracker = () => {
         : transactionData.category,
       user_id: session.user.id,
     };
+    if (transactionData.type === 'loan') {
+      const amount = parseFloat(transactionData.amount);
+      newTransaction.amount = transactionData.loanAction === 'take' ? -Math.abs(amount) : Math.abs(amount);
+    }
+    const { loanAction, ...transactionToInsert } = newTransaction;
     const { data, error } = await supabase
       .from('transactions')
-      .insert([newTransaction]);
+      .insert([transactionToInsert]);
     if (error) {
       console.error('Error adding transaction:', error);
+      setErrorMessage('Error adding transaction: ' + error.message);
     } else {
-      setTransactions([newTransaction, ...transactions]);
+      setTransactions([transactionToInsert, ...transactions]);
       setTransactionData({
         type: 'expense',
         amount: '',
         description: '',
         category: '',
         date: selectedDate,
-        savings: 0
+        savings: 0,
+        loanAction: ''
       });
       setShowAddTransaction(false);
+      setErrorMessage('');
     }
   };
 
@@ -499,7 +526,8 @@ const FinanceTracker = () => {
     const expenses = filtered.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
     const savings = filtered.filter(t => t.type === 'savings').reduce((sum, t) => sum + t.savings, 0);
     const balance = income - expenses - savings;
-    return { income, expenses, savings, balance, filtered };
+    const loanBalance = calculateLoanBalance();
+    return { income, expenses, savings, balance, loanBalance, filtered };
   };
 
   const calculateGoalProgress = (goal) => {
@@ -746,7 +774,7 @@ const FinanceTracker = () => {
         <div className="p-6 space-y-6">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-white">Financial Overview</h2>
-            <div className="flex items-center space-x-4">
+            <div className="flex flex-wrap items-center space-x-4">
               {viewPeriod === 'daily' && (
                 <div className="flex items-center space-x-2">
                   <button onClick={handlePreviousDay} className="p-2 bg-white/10 rounded-full">
@@ -800,7 +828,12 @@ const FinanceTracker = () => {
               </div>
             </div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          {errorMessage && (
+            <div className="bg-red-500/20 border border-red-500 text-red-500 px-4 py-3 rounded mb-4">
+              {errorMessage}
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
             <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
               <div className="flex items-center justify-between">
                 <div>
@@ -847,6 +880,17 @@ const FinanceTracker = () => {
                 </div>
               </div>
             </div>
+            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-white/70 text-sm">Loan Remaining</p>
+                  <p className="text-2xl font-bold text-yellow-400">${calculateLoanBalance().toLocaleString()}</p>
+                </div>
+                <div className="w-12 h-12 bg-yellow-500/20 rounded-full flex items-center justify-center">
+                  <DollarSign className="w-6 h-6 text-yellow-400" />
+                </div>
+              </div>
+            </div>
           </div>
           {viewPeriod === 'daily' && (
             <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
@@ -864,17 +908,29 @@ const FinanceTracker = () => {
                   {stats.filtered.map(transaction => (
                     <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
                       <div className="flex items-center space-x-3">
-                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : 'bg-red-500/20'}`}>
-                          {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <DollarSign className="w-5 h-5 text-blue-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
+                        <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : transaction.type === 'loan' ? 'bg-yellow-500/20' : 'bg-red-500/20'}`}>
+                          {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <DollarSign className="w-5 h-5 text-blue-400" /> : transaction.type === 'loan' ? <DollarSign className="w-5 h-5 text-yellow-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
                         </div>
                         <div>
-                          <p className="text-white font-medium">{transaction.description}</p>
-                          <p className="text-white/70 text-sm">{transaction.category} • {transaction.date}</p>
+                          <p className="text-white font-medium">
+                            {transaction.type === 'loan' ? (transaction.amount < 0 ? `Loan from ${transaction.description}` : `Loan Cleared to ${transaction.description}`) : transaction.description}
+                          </p>
+                          <p className="text-white/70 text-sm">{transaction.date}</p>
                         </div>
                       </div>
                       <div className="flex items-center space-x-2">
-                        <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' : transaction.type === 'savings' ? 'text-blue-400' : 'text-red-400'}`}>
-                          {transaction.type === 'income' ? '+' : transaction.type === 'savings' ? 'S: ' : '- '}${transaction.type === 'savings' ? transaction.savings.toLocaleString() : transaction.amount.toLocaleString()}
+                        <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' :
+                          transaction.type === 'savings' ? 'text-blue-400' :
+                            transaction.type === 'loan' && transaction.amount > 0 ? 'text-green-400' :
+                              transaction.type === 'loan' && transaction.amount < 0 ? 'text-red-400' :
+                                'text-red-400'
+                          }`}>
+                          {transaction.type === 'income' ? '+' : ''}
+                          {transaction.type === 'savings' ? 'S: ' : ''}
+                          {transaction.type === 'loan' ? (transaction.amount > 0 ? 'Clear: ' : 'Take: ') : ''}
+                          ${transaction.type === 'savings'
+                            ? transaction.savings.toLocaleString()
+                            : Math.abs(transaction.amount).toLocaleString()}
                         </p>
                       </div>
                     </div>
@@ -1167,12 +1223,20 @@ const FinanceTracker = () => {
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-xl font-bold text-white">Add Transaction</h3>
               <button
-                onClick={() => setShowAddTransaction(false)}
+                onClick={() => {
+                  setShowAddTransaction(false);
+                  setErrorMessage('');
+                }}
                 className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-full transition-all"
               >
                 ×
               </button>
             </div>
+            {errorMessage && (
+              <div className="bg-red-500/20 border border-red-500 text-red-500 px-4 py-3 rounded mb-4">
+                {errorMessage}
+              </div>
+            )}
             <form onSubmit={handleAddTransaction} className="space-y-4">
               <div className="flex bg-white/10 rounded-full p-1">
                 <button
@@ -1205,8 +1269,18 @@ const FinanceTracker = () => {
                 >
                   Savings
                 </button>
+                <button
+                  type="button"
+                  onClick={() => setTransactionData({ ...transactionData, type: 'loan' })}
+                  className={`flex-1 py-2 px-4 rounded-full text-sm font-medium transition-all ${transactionData.type === 'loan'
+                    ? 'bg-yellow-500 text-white shadow-lg'
+                    : 'text-white/70 hover:text-white'
+                    }`}
+                >
+                  Loan
+                </button>
               </div>
-              {transactionData.type !== 'savings' && (
+              {transactionData.type !== 'savings' && transactionData.type !== 'loan' && (
                 <input
                   type="number"
                   placeholder="Amount"
@@ -1230,6 +1304,38 @@ const FinanceTracker = () => {
                   required
                 />
               )}
+              {transactionData.type === 'loan' && (
+                <>
+                  <input
+                    type="number"
+                    placeholder="Loan Amount"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={transactionData.amount}
+                    onChange={(e) => setTransactionData({ ...transactionData, amount: e.target.value })}
+                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                    required
+                  />
+                  <input
+                    type="text"
+                    placeholder="Person Name"
+                    value={transactionData.description}
+                    onChange={(e) => setTransactionData({ ...transactionData, description: e.target.value })}
+                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                    required
+                  />
+                  <select
+                    value={transactionData.loanAction}
+                    onChange={(e) => setTransactionData({ ...transactionData, loanAction: e.target.value })}
+                    className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-white/30"
+                    required
+                  >
+                    <option value="">Select Loan Action</option>
+                    <option value="take">Take Loan</option>
+                    <option value="clear">Clear Loan</option>
+                  </select>
+                </>
+              )}
               <input
                 type="text"
                 placeholder="Description"
@@ -1238,7 +1344,7 @@ const FinanceTracker = () => {
                 className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
                 required
               />
-              {transactionData.type !== 'savings' && (
+              {transactionData.type !== 'savings' && transactionData.type !== 'loan' && (
                 <select
                   value={transactionData.category}
                   onChange={(e) => setTransactionData({ ...transactionData, category: e.target.value })}
@@ -1277,7 +1383,10 @@ const FinanceTracker = () => {
               <div className="flex space-x-3">
                 <button
                   type="button"
-                  onClick={() => setShowAddTransaction(false)}
+                  onClick={() => {
+                    setShowAddTransaction(false);
+                    setErrorMessage('');
+                  }}
                   className="flex-1 py-3 bg-white/10 text-white rounded-2xl font-medium hover:bg-white/20 transition-all"
                 >
                   Cancel
