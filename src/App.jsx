@@ -3,9 +3,8 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import {
   User, DollarSign, TrendingUp, TrendingDown, Calendar, Plus, Settings, LogOut, Eye, EyeOff,
   Trash2, Upload, Target, ChevronLeft, ChevronRight, PiggyBank, CreditCard,
-  Landmark, Wallet
+  Landmark, Wallet, ShoppingBag, Utensils, Home, Car, FileText, Heart, BookOpen, ShoppingCart
 } from 'lucide-react';
-
 import { supabase } from './supabase';
 
 const SuccessDialog = ({ message, onClose }) => (
@@ -88,7 +87,8 @@ const FinanceTracker = () => {
     loanAction: '',
     loanName: '',
     loanId: '',
-    personType: 'new'
+    personType: 'new',
+    loanTime: ''
   });
   const [loans, setLoans] = useState([]);
   const fileInputRef = useRef(null);
@@ -161,6 +161,7 @@ const FinanceTracker = () => {
       .eq('user_id', session.user.id)
       .order('date', { ascending: false })
       .order('created_at', { ascending: false });
+
     if (error) {
       console.error('Error fetching transactions:', error);
     } else {
@@ -173,6 +174,7 @@ const FinanceTracker = () => {
       .from('goals')
       .select('*')
       .eq('user_id', userId);
+
     if (error) {
       console.error('Error fetching goals:', error);
     } else {
@@ -185,6 +187,7 @@ const FinanceTracker = () => {
       .from('loans')
       .select('*')
       .eq('user_id', userId);
+
     if (error) {
       console.error('Error fetching loans:', error);
     } else {
@@ -199,11 +202,13 @@ const FinanceTracker = () => {
         .storage
         .from('profile-pictures')
         .getPublicUrl(filePath);
+
       if (error) {
         console.error('Error getting public URL:', error);
         setProfilePicUrl('');
         return;
       }
+
       const response = await fetch(publicUrl);
       if (!response.ok) {
         throw new Error('Image not found');
@@ -218,11 +223,13 @@ const FinanceTracker = () => {
   const handleAuth = async (e) => {
     e.preventDefault();
     setErrorMessage('');
+
     if (authMode === 'register') {
       if (authData.password !== authData.confirmPassword) {
         setErrorMessage('Passwords do not match');
         return;
       }
+
       const { data, error } = await supabase.auth.signUp({
         email: authData.email,
         password: authData.password,
@@ -232,6 +239,7 @@ const FinanceTracker = () => {
           }
         }
       });
+
       if (error) {
         setErrorMessage(error.message || 'Error signing up');
       } else {
@@ -243,6 +251,7 @@ const FinanceTracker = () => {
         email: authData.email,
         password: authData.password
       });
+
       if (error) {
         setErrorMessage(error.message || 'Invalid login details');
       } else {
@@ -281,19 +290,23 @@ const FinanceTracker = () => {
       alert("Not authenticated");
       return;
     }
+
     const { error: signInError } = await supabase.auth.signInWithPassword({
       email: session.user.email,
       password: deletePassword
     });
+
     if (signInError) {
       alert("Incorrect password");
       return;
     }
+
     const res = await fetch("/.netlify/functions/delete-user", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ user_id: session.user.id }),
     });
+
     const result = await res.json();
     if (res.ok) {
       await supabase.auth.signOut();
@@ -318,37 +331,50 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
+
     const allowedTypes = ['income', 'expense', 'savings', 'loan'];
     if (!allowedTypes.includes(transactionData.type)) {
       console.error('Invalid transaction type');
       return;
     }
+
     if (transactionData.type === 'savings') {
       const loanBalance = calculateLoanBalance();
       const savingsAmount = parseFloat(transactionData.savings);
       const balanceAfterSavings = stats.balance - savingsAmount;
+
       if (balanceAfterSavings - loanBalance < 0) {
         setErrorMessage('You have loans to clear. Please clear them first to make savings.');
         return;
       }
+
       if (savingsAmount > stats.balance) {
         setErrorMessage('Savings amount should be less than the current balance.');
         return;
       }
     }
+
     if (transactionData.type === 'loan') {
       if (transactionData.loanAction === 'take') {
         if (transactionData.personType === 'new') {
+          const loanDate = transactionData.date === new Date().toISOString().split('T')[0] ?
+            new Date().toISOString() :
+            new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
+
           const { data: loanData, error: loanError } = await supabase
             .from('loans')
             .insert([{
               user_id: session.user.id,
               name: transactionData.loanName,
-              description: transactionData.description,
+              description: [transactionData.description],
               total_amount: parseFloat(transactionData.amount),
-              remaining_amount: parseFloat(transactionData.amount)
+              remaining_amount: parseFloat(transactionData.amount),
+              loan_date: [loanDate],
+              transaction_amount: [parseFloat(transactionData.amount)],
+              type: ['take']
             }])
             .select();
+
           if (loanError) {
             console.error('Error adding loan:', loanError);
             setErrorMessage('Error adding loan: ' + loanError.message);
@@ -360,14 +386,23 @@ const FinanceTracker = () => {
             setErrorMessage('Selected loan not found.');
             return;
           }
+
+          const loanDate = transactionData.date === new Date().toISOString().split('T')[0] ?
+            new Date().toISOString() :
+            new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
+
           const { error: loanError } = await supabase
             .from('loans')
             .update({
               total_amount: selectedLoan.total_amount + parseFloat(transactionData.amount),
               remaining_amount: selectedLoan.remaining_amount + parseFloat(transactionData.amount),
-              description: transactionData.description
+              description: [...selectedLoan.description, transactionData.description],
+              loan_date: [...selectedLoan.loan_date, loanDate],
+              transaction_amount: [...selectedLoan.transaction_amount, parseFloat(transactionData.amount)],
+              type: [...selectedLoan.type, 'take']
             })
             .eq('id', selectedLoan.id);
+
           if (loanError) {
             console.error('Error updating loan:', loanError);
             setErrorMessage('Error updating loan: ' + loanError.message);
@@ -380,17 +415,28 @@ const FinanceTracker = () => {
           setErrorMessage('Selected loan not found.');
           return;
         }
+
         const clearAmount = parseFloat(transactionData.amount);
         if (clearAmount > selectedLoan.remaining_amount) {
           setErrorMessage('Clear amount exceeds remaining loan amount.');
           return;
         }
+
+        const loanDate = transactionData.date === new Date().toISOString().split('T')[0] ?
+          new Date().toISOString() :
+          new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
+
         const { error: loanError } = await supabase
           .from('loans')
           .update({
-            remaining_amount: selectedLoan.remaining_amount - clearAmount
+            remaining_amount: selectedLoan.remaining_amount - clearAmount,
+            description: [...selectedLoan.description, transactionData.description],
+            loan_date: [...selectedLoan.loan_date, loanDate],
+            transaction_amount: [...selectedLoan.transaction_amount, clearAmount],
+            type: [...selectedLoan.type, 'clear']
           })
           .eq('id', selectedLoan.id);
+
         if (loanError) {
           console.error('Error updating loan:', loanError);
           setErrorMessage('Error updating loan: ' + loanError.message);
@@ -400,41 +446,48 @@ const FinanceTracker = () => {
       await fetchLoans(session.user.id);
     }
 
-    const { loanAction, loanName, loanId, personType, ...transactionToInsert } = transactionData;
-    const { data, error } = await supabase
-      .from('transactions')
-      .insert([{
-        ...transactionToInsert,
-        amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
-        savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
-        user_id: session.user.id,
-      }]);
+    if (transactionData.type !== 'loan') {
+      const { loanAction, loanName, loanId, personType, loanTime, ...transactionToInsert } = transactionData;
+      const { data, error } = await supabase
+        .from('transactions')
+        .insert([{
+          ...transactionToInsert,
+          amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
+          savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
+          user_id: session.user.id,
+        }]);
 
-    if (error) {
-      console.error('Error adding transaction:', error);
-      setErrorMessage('Error adding transaction: ' + error.message);
-    } else {
+      if (error) {
+        console.error('Error adding transaction:', error);
+        setErrorMessage('Error adding transaction: ' + error.message);
+        return;
+      }
+
       setTransactions([{
         ...transactionToInsert,
         amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
         savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
       }, ...transactions]);
-      setTransactionData({
-        type: 'expense',
-        amount: '',
-        description: '',
-        category: '',
-        date: selectedDate,
-        savings: 0,
-        loanAction: '',
-        loanName: '',
-        loanId: '',
-        personType: 'new'
-      });
-      setShowAddTransaction(false);
-      setErrorMessage('');
-      await fetchLoans(session.user.id);
     }
+
+    setTransactionData({
+      type: 'expense',
+      amount: '',
+      description: '',
+      category: '',
+      date: selectedDate,
+      savings: 0,
+      loanAction: '',
+      loanName: '',
+      loanId: '',
+      personType: 'new',
+      loanTime: ''
+    });
+
+    setShowAddTransaction(false);
+    setErrorMessage('');
+    await fetchLoans(session.user.id);
+    await fetchTransactions();
   };
 
   const handleAddMonthlyGoal = async (e) => {
@@ -444,6 +497,7 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
+
     const newGoal = {
       ...monthlyGoalData,
       type: 'monthly',
@@ -454,9 +508,11 @@ const FinanceTracker = () => {
       status: 'pending',
       is_reached: false
     };
+
     const { data, error } = await supabase
       .from('goals')
       .insert([newGoal]);
+
     if (error) {
       console.error('Error adding goal:', error);
     } else {
@@ -478,6 +534,7 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
+
     const newGoal = {
       ...yearlyGoalData,
       type: 'yearly',
@@ -488,9 +545,11 @@ const FinanceTracker = () => {
       status: 'pending',
       is_reached: false
     };
+
     const { data, error } = await supabase
       .from('goals')
       .insert([newGoal]);
+
     if (error) {
       console.error('Error adding goal:', error);
     } else {
@@ -512,17 +571,21 @@ const FinanceTracker = () => {
       console.error('Error getting session:', sessionError);
       return;
     }
+
     if (accountData.newPassword && accountData.newPassword !== accountData.confirmNewPassword) {
       alert('New passwords do not match');
       return;
     }
+
     const updates = {
       data: { name: accountData.name },
       email: accountData.email
     };
+
     if (accountData.newPassword) {
       updates.password = accountData.newPassword;
     }
+
     const { error } = await supabase.auth.updateUser(updates);
     if (error) {
       console.error('Error updating account:', error);
@@ -541,12 +604,14 @@ const FinanceTracker = () => {
       console.error('User is not authenticated');
       return;
     }
+
     const newStatus = currentStatus === 'completed' ? 'pending' : 'completed';
     const { data, error } = await supabase
       .from('goals')
       .update({ status: newStatus, is_reached: newStatus === 'completed' })
       .eq('id', goalId)
       .select();
+
     if (error) {
       console.error('Error updating goal status:', error);
     } else {
@@ -560,11 +625,13 @@ const FinanceTracker = () => {
       console.error('No file selected');
       return;
     }
+
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !session) {
       console.error('Error getting session:', sessionError);
       return;
     }
+
     const filePath = `${session.user.id}/${session.user.id}/profile-picture.png`;
     try {
       const { data, error } = await supabase.storage
@@ -572,12 +639,14 @@ const FinanceTracker = () => {
         .upload(filePath, file, {
           upsert: true
         });
+
       if (error) {
         console.error('Error uploading profile picture:', error);
       } else {
         const { data: { publicUrl }, error: urlError } = supabase.storage
           .from('profile-pictures')
           .getPublicUrl(filePath);
+
         if (urlError) {
           console.error('Error getting public URL:', urlError);
         } else {
@@ -590,36 +659,72 @@ const FinanceTracker = () => {
   };
 
   const calculateStats = () => {
-    const filterByPeriod = (transaction) => {
+    const currentDate = new Date();
+    let filterMonth, filterYear;
+
+    if (viewPeriod === 'monthly') {
+      const selectedDate = new Date(selectedMonth);
+      filterMonth = selectedDate.getMonth();
+      filterYear = selectedDate.getFullYear();
+    } else if (viewPeriod === 'yearly') {
+      filterMonth = null;
+      filterYear = parseInt(selectedYear);
+    } else {
+      const selectedDateObj = new Date(selectedDate);
+      filterMonth = selectedDateObj.getMonth();
+      filterYear = selectedDateObj.getFullYear();
+    }
+
+    const filterByPeriod = (transaction, useDayFilter = false) => {
       const transactionDate = new Date(transaction.date);
-      if (viewPeriod === 'daily') {
-        return transactionDate.toDateString() === new Date(selectedDate).toDateString();
+      if (viewPeriod === 'daily' && useDayFilter) {
+        const selected = new Date(selectedDate);
+        return transactionDate.toDateString() === selected.toDateString();
       } else if (viewPeriod === 'monthly') {
-        return transactionDate.getMonth().toString() === new Date(selectedMonth).getMonth().toString() &&
-          transactionDate.getFullYear().toString() === new Date(selectedMonth).getFullYear().toString();
+        return transactionDate.getMonth() === filterMonth && transactionDate.getFullYear() === filterYear;
       } else if (viewPeriod === 'yearly') {
-        return transactionDate.getFullYear().toString() === selectedYear;
+        return transactionDate.getFullYear() === filterYear;
       }
       return true;
     };
-    const filtered = transactions.filter(filterByPeriod);
-    const income = filtered.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-    const expenses = filtered.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
-    const savings = filtered.filter(t => t.type === 'savings').reduce((sum, t) => sum + t.savings, 0);
-    const balance = income - expenses - savings;
-    const loanBalance = calculateLoanBalance();
-    return { income, expenses, savings, balance, loanBalance, filtered };
+
+    const filteredTransactionsForStats = transactions.filter(transaction => filterByPeriod(transaction, false));
+    const income = filteredTransactionsForStats.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+    const expenses = filteredTransactionsForStats.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+    const savings = transactions.filter(t => t.type === 'savings').reduce((sum, t) => sum + t.savings, 0);
+    const balance = income - expenses;
+
+    const loanTransactions = loans.flatMap(loan =>
+      loan.loan_date.map((date, index) => ({
+        id: `loan-${loan.id}-${index}`,
+        type: 'loan',
+        loanAction: loan.type[index],
+        name: loan.name,
+        description: loan.description[index],
+        amount: loan.transaction_amount[index],
+        date: date,
+        created_at: loan.loan_date[index]
+      }))
+    ).filter(transaction => filterByPeriod(transaction, false));
+
+    const filteredTransactionsForDisplay = [...filteredTransactionsForStats, ...loanTransactions].filter(transaction => filterByPeriod(transaction, true));
+    const filtered = filteredTransactionsForDisplay.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+    return { income, expenses, savings, balance, loanBalance: calculateLoanBalance(), filtered };
   };
 
   const calculateGoalProgress = (goal) => {
     const goalAmount = goal.amount;
     const goalDate = new Date(goal.target_date);
+
     const savingsTransactions = transactions.filter(transaction => {
       const transactionDate = new Date(transaction.date);
       return transaction.type === 'savings' && transactionDate <= goalDate;
     });
+
     const totalSaved = savingsTransactions.reduce((sum, transaction) => sum + transaction.savings, 0);
     const progressPercentage = (totalSaved / goalAmount) * 100;
+
     return { totalSaved, progressPercentage };
   };
 
@@ -627,9 +732,11 @@ const FinanceTracker = () => {
     const stats = calculateStats();
     const { filtered } = stats;
     const dateMap = {};
+
     filtered.forEach(transaction => {
       let dateKey;
       const transactionDate = new Date(transaction.date);
+
       if (viewPeriod === 'daily') {
         dateKey = transactionDate.toDateString();
       } else if (viewPeriod === 'monthly') {
@@ -637,9 +744,11 @@ const FinanceTracker = () => {
       } else if (viewPeriod === 'yearly') {
         dateKey = transactionDate.getFullYear().toString();
       }
+
       if (!dateMap[dateKey]) {
         dateMap[dateKey] = { date: dateKey, income: 0, expenses: 0, savings: 0 };
       }
+
       if (transaction.type === 'income') {
         dateMap[dateKey].income += transaction.amount;
       } else if (transaction.type === 'expense') {
@@ -648,6 +757,7 @@ const FinanceTracker = () => {
         dateMap[dateKey].savings += transaction.savings;
       }
     });
+
     return Object.entries(dateMap).map(([date, values]) => ({ ...values, date }));
   };
 
@@ -655,6 +765,7 @@ const FinanceTracker = () => {
     const stats = calculateStats();
     const expenseCategoryMap = {};
     const incomeCategoryMap = {};
+
     stats.filtered.forEach(transaction => {
       if (transaction.type === 'expense') {
         expenseCategoryMap[transaction.category] = (expenseCategoryMap[transaction.category] || 0) + transaction.amount;
@@ -662,16 +773,19 @@ const FinanceTracker = () => {
         incomeCategoryMap[transaction.category] = (incomeCategoryMap[transaction.category] || 0) + transaction.amount;
       }
     });
+
     const expenseCategoryData = Object.entries(expenseCategoryMap).map(([category, amount], index) => ({
       category,
       amount,
       percentage: ((amount / stats.expenses) * 100).toFixed(1)
     }));
+
     const incomeCategoryData = Object.entries(incomeCategoryMap).map(([category, amount], index) => ({
       category,
       amount,
       percentage: ((amount / stats.income) * 100).toFixed(1)
     }));
+
     return { expenseCategoryData, incomeCategoryData };
   };
 
@@ -686,6 +800,49 @@ const FinanceTracker = () => {
     currentDate.setDate(currentDate.getDate() + 1);
     setSelectedDate(currentDate.toISOString().split('T')[0]);
   };
+
+  const handleEndOfMonth = async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) {
+      console.error('User is not authenticated');
+      return;
+    }
+
+    const currentDate = new Date();
+    const lastDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0);
+
+    if (currentDate.toDateString() === lastDayOfMonth.toDateString()) {
+      const stats = calculateStats();
+      if (stats.balance > 0) {
+        const { data, error } = await supabase
+          .from('transactions')
+          .insert([{
+            type: 'savings',
+            amount: 0,
+            savings: stats.balance,
+            description: 'End of month savings',
+            date: new Date().toISOString().split('T')[0],
+            user_id: session.user.id,
+          }]);
+
+        if (error) {
+          console.error('Error adding end of month savings:', error);
+        } else {
+          setTransactions([{
+            type: 'savings',
+            amount: 0,
+            savings: stats.balance,
+            description: 'End of month savings',
+            date: new Date().toISOString().split('T')[0],
+          }, ...transactions]);
+        }
+      }
+    }
+  };
+
+  useEffect(() => {
+    handleEndOfMonth();
+  }, [transactions]);
 
   const COLORS = ['#8884d8', '#82ca9d', '#ffc658', '#ff7c7c', '#8dd1e1', '#d084d0'];
 
@@ -975,48 +1132,63 @@ const FinanceTracker = () => {
             </div>
           </div>
           {viewPeriod === 'daily' && (
-            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
-              <div className="flex justify-between items-center mb-4">
-                <h3 className="text-xl font-bold text-white">Transactions</h3>
-                <button
-                  onClick={() => setShowAddTransaction(true)}
-                  className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 flex items-center justify-center text-white hover:from-purple-600 hover:to-blue-600 transition-all shadow-lg"
-                >
-                  <Plus size={24} />
-                </button>
-              </div>
-              {stats.filtered.filter(transaction => transaction.type !== 'loan').length > 0 ? (
-                <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
-                  {stats.filtered
-                    .filter(transaction => transaction.type !== 'loan')
-                    .slice(0, 7)
-                    .map(transaction => (
-                      <div key={transaction.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
+            <>
+              <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-xl font-bold text-white">Transactions</h3>
+                  <button
+                    onClick={() => setShowAddTransaction(true)}
+                    className="w-10 h-10 rounded-full bg-gradient-to-r from-purple-500 to-blue-500 flex items-center justify-center text-white hover:from-purple-600 hover:to-blue-600 transition-all shadow-lg"
+                  >
+                    <Plus size={24} />
+                  </button>
+                </div>
+                {stats.filtered.length > 0 ? (
+                  <div className="space-y-3 max-h-96 overflow-y-auto pr-2">
+                    {stats.filtered.map(transaction => (
+                      <div key={transaction.id || Math.random()} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
                         <div className="flex items-center space-x-3">
-                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : 'bg-red-500/20'}`}>
-                            {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> : transaction.type === 'savings' ? <PiggyBank className="w-5 h-5 text-blue-400" /> : <TrendingDown className="w-5 h-5 text-red-400" />}
+                          <div className={`w-10 h-10 rounded-full flex items-center justify-center ${transaction.type === 'income' ? 'bg-green-500/20' : transaction.type === 'savings' ? 'bg-blue-500/20' : transaction.type === 'loan' ? 'bg-yellow-500/20' : 'bg-red-500/20'}`}>
+                            {transaction.type === 'income' ? <TrendingUp className="w-5 h-5 text-green-400" /> :
+                              transaction.type === 'savings' ? <PiggyBank className="w-5 h-5 text-blue-400" /> :
+                                transaction.type === 'loan' ? (
+                                  transaction.loanAction === 'take' ? <ShoppingBag className="w-5 h-5 text-yellow-400" /> : <CreditCard className="w-5 h-5 text-yellow-400" />
+                                ) : <TrendingDown className="w-5 h-5 text-red-400" />}
                           </div>
                           <div>
-                            <p className="text-white font-medium">{transaction.description}</p>
-                            <p className="text-white/70 text-sm">{transaction.date}</p>
+                            <p className="text-white font-medium">
+                              {transaction.type === 'loan' ? (
+                                transaction.loanAction === 'take' ? (
+                                  `From ${transaction.name} - ${transaction.description}`
+                                ) : (
+                                  `To ${transaction.name}`
+                                )
+                              ) : (
+                                transaction.description
+                              )}
+                            </p>
+                            <p className="text-white/70 text-sm">{new Date(transaction.date).toISOString().slice(0, 10)}
+                            </p>
                           </div>
                         </div>
-                        <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' : transaction.type === 'savings' ? 'text-blue-400' : 'text-red-400'}`}>
+                        <p className={`font-bold ${transaction.type === 'income' ? 'text-green-400' : transaction.type === 'savings' ? 'text-blue-400' : transaction.type === 'loan' && transaction.loanAction === 'clear' ? 'text-green-400' : 'text-red-400'}`}>
                           {transaction.type === 'income' ? '+' : ''}
                           {transaction.type === 'savings' ? 'S: ' : ''}
                           ${transaction.type === 'savings' ? transaction.savings.toLocaleString() : Math.abs(transaction.amount).toLocaleString()}
                         </p>
                       </div>
                     ))}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-40 w-full">
-                  <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
-                    No transactions available.
-                  </p>
-                </div>
-              )}
-            </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-center h-40 w-full">
+                    <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
+                      No transactions available.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+            </>
           )}
           {viewPeriod === 'monthly' && (
             <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
@@ -1124,30 +1296,38 @@ const FinanceTracker = () => {
               )}
             </div>
           )}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
-              <h3 className="text-xl font-bold text-white mb-4">Income vs Expenses</h3>
-              {chartData.length > 0 ? (
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" />
-                    <XAxis dataKey="date" stroke="rgba(255,255,255,0.7)" />
-                    <YAxis stroke="rgba(255,255,255,0.7)" />
-                    <Tooltip contentStyle={{ backgroundColor: 'rgba(255,255,255,0.1)', backdropFilter: 'blur(10px)', border: '1px solid rgba(255,255,255,0.2)', borderRadius: '12px', color: 'white' }} />
-                    <Legend />
-                    <Line type="monotone" dataKey="income" stroke="#4ade80" strokeWidth={3} dot={{ fill: '#4ade80', strokeWidth: 2 }} />
-                    <Line type="monotone" dataKey="expenses" stroke="#f87171" strokeWidth={3} dot={{ fill: '#f87171', strokeWidth: 2 }} />
-                    <Line type="monotone" dataKey="savings" stroke="#3b82f6" strokeWidth={3} dot={{ fill: '#3b82f6', strokeWidth: 2 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="flex items-center justify-center h-64 w-full">
-                  <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
-                    No income vs expenses data available.
-                  </p>
-                </div>
-              )}
+          <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold text-white">Loans Remaining</h3>
             </div>
+            {loans.filter(loan => loan.remaining_amount > 0).length > 0 ? (
+              <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
+                {loans.filter(loan => loan.remaining_amount > 0).map((loan) => (
+                  <div key={loan.id} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                        <CreditCard className="w-5 h-5 text-yellow-400" />
+                      </div>
+                      <div>
+                        <p className="text-white font-medium">{loan.name}</p>
+                        <p className="text-white/70 text-sm">{loan.description.join(', ')}</p>
+                      </div>
+                    </div>
+                    <p className="text-yellow-400 font-medium">
+                      ${loan.remaining_amount.toLocaleString()}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-40 w-full">
+                <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
+                  No loans available.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="lg:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
             <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
               <h3 className="text-xl font-bold text-white mb-4">Expense Categories</h3>
               {expenseCategoryData.length > 0 ? (
@@ -1186,42 +1366,6 @@ const FinanceTracker = () => {
                 <div className="flex items-center justify-center h-64 w-full">
                   <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
                     No income data available.
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="bg-white/10 backdrop-blur-xl border border-white/20 rounded-3xl p-6 shadow-xl">
-              <h3 className="text-xl font-bold text-white mb-4">Loan Details</h3>
-              {loans.length > 0 ? (
-                <div className="space-y-4 max-h-64 overflow-y-auto">
-                  {loans.map((loan) => {
-                    const percentageCleared = ((loan.total_amount - loan.remaining_amount) / loan.total_amount * 100).toFixed(2);
-                    return (
-                      <div key={loan.id} className="p-4 bg-white/5 rounded-2xl">
-                        <div className="flex justify-between items-center">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-10 h-10 rounded-full bg-yellow-500/20 flex items-center justify-center">
-                              <CreditCard className="w-5 h-5 text-yellow-400" />
-                            </div>
-                            <div>
-                              <p className="text-white font-medium">{loan.name}</p>
-                              <p className="text-white/70 text-sm">{loan.description}</p>
-                            </div>
-                          </div>
-                          <div>
-                            <p className="text-yellow-400 font-medium">
-                              ${loan.remaining_amount.toLocaleString()} <span className="text-white/70">({percentageCleared}% cleared)</span>
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-64 w-full">
-                  <p className="text-white/70 text-center text-xl font-bold bg-gradient-to-r from-purple-500 to-blue-500 bg-clip-text text-transparent animate-pulse">
-                    No loans available.
                   </p>
                 </div>
               )}
@@ -1478,6 +1622,15 @@ const FinanceTracker = () => {
                         className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
                         required
                       />
+                      {transactionData.date !== new Date().toISOString().split('T')[0] && (
+                        <input
+                          type="time"
+                          placeholder="Time"
+                          value={transactionData.loanTime}
+                          onChange={(e) => setTransactionData({ ...transactionData, loanTime: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      )}
                     </>
                   )}
                   {transactionData.loanAction === 'clear' && (
@@ -1503,6 +1656,15 @@ const FinanceTracker = () => {
                         className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
                         required
                       />
+                      {transactionData.date !== new Date().toISOString().split('T')[0] && (
+                        <input
+                          type="time"
+                          placeholder="Time"
+                          value={transactionData.loanTime}
+                          onChange={(e) => setTransactionData({ ...transactionData, loanTime: e.target.value })}
+                          className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                        />
+                      )}
                     </>
                   )}
                 </>
