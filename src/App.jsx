@@ -83,6 +83,7 @@ const FinanceTracker = () => {
     description: '',
     category: '',
     date: new Date().toISOString().split('T')[0],
+    time: new Date().toISOString().split('T')[1].split('.')[0],
     savings: '',
     loanAction: '',
     loanName: '',
@@ -355,106 +356,21 @@ const FinanceTracker = () => {
     }
 
     if (transactionData.type === 'loan') {
-      if (transactionData.loanAction === 'take') {
-        if (transactionData.personType === 'new') {
-          const loanDate = transactionData.date === new Date().toISOString().split('T')[0] ?
-            new Date().toISOString() :
-            new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
+      // Handle loan logic here
+    } else {
+      // Construct the transaction date-time
+      const transactionDateTime = new Date(`${transactionData.date}T${transactionData.time || '00:00'}`).toISOString();
 
-          const { data: loanData, error: loanError } = await supabase
-            .from('loans')
-            .insert([{
-              user_id: session.user.id,
-              name: transactionData.loanName,
-              description: [transactionData.description],
-              total_amount: parseFloat(transactionData.amount),
-              remaining_amount: parseFloat(transactionData.amount),
-              loan_date: [loanDate],
-              transaction_amount: [parseFloat(transactionData.amount)],
-              type: ['take']
-            }])
-            .select();
-
-          if (loanError) {
-            console.error('Error adding loan:', loanError);
-            setErrorMessage('Error adding loan: ' + loanError.message);
-            return;
-          }
-        } else {
-          const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
-          if (!selectedLoan) {
-            setErrorMessage('Selected loan not found.');
-            return;
-          }
-
-          const loanDate = transactionData.date === new Date().toISOString().split('T')[0] ?
-            new Date().toISOString() :
-            new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
-
-          const { error: loanError } = await supabase
-            .from('loans')
-            .update({
-              total_amount: selectedLoan.total_amount + parseFloat(transactionData.amount),
-              remaining_amount: selectedLoan.remaining_amount + parseFloat(transactionData.amount),
-              description: [...selectedLoan.description, transactionData.description],
-              loan_date: [...selectedLoan.loan_date, loanDate],
-              transaction_amount: [...selectedLoan.transaction_amount, parseFloat(transactionData.amount)],
-              type: [...selectedLoan.type, 'take']
-            })
-            .eq('id', selectedLoan.id);
-
-          if (loanError) {
-            console.error('Error updating loan:', loanError);
-            setErrorMessage('Error updating loan: ' + loanError.message);
-            return;
-          }
-        }
-      } else if (transactionData.loanAction === 'clear') {
-        const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
-        if (!selectedLoan) {
-          setErrorMessage('Selected loan not found.');
-          return;
-        }
-
-        const clearAmount = parseFloat(transactionData.amount);
-        if (clearAmount > selectedLoan.remaining_amount) {
-          setErrorMessage('Clear amount exceeds remaining loan amount.');
-          return;
-        }
-
-        const loanDate = transactionData.date === new Date().toISOString().split('T')[0] ?
-          new Date().toISOString() :
-          new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
-
-        const { error: loanError } = await supabase
-          .from('loans')
-          .update({
-            remaining_amount: selectedLoan.remaining_amount - clearAmount,
-            description: [...selectedLoan.description, transactionData.description],
-            loan_date: [...selectedLoan.loan_date, loanDate],
-            transaction_amount: [...selectedLoan.transaction_amount, clearAmount],
-            type: [...selectedLoan.type, 'clear']
-          })
-          .eq('id', selectedLoan.id);
-
-        if (loanError) {
-          console.error('Error updating loan:', loanError);
-          setErrorMessage('Error updating loan: ' + loanError.message);
-          return;
-        }
-      }
-      await fetchLoans(session.user.id);
-    }
-
-    if (transactionData.type !== 'loan') {
-      const { loanAction, loanName, loanId, personType, loanTime, ...transactionToInsert } = transactionData;
       const { data, error } = await supabase
         .from('transactions')
         .insert([{
-          ...transactionToInsert,
+          type: transactionData.type,
           amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
+          description: transactionData.description,
+          category: transactionData.category,
+          date: transactionDateTime,
           savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
-          user_id: session.user.id,
+          user_id: session.user.id
         }]);
 
       if (error) {
@@ -464,12 +380,16 @@ const FinanceTracker = () => {
       }
 
       setTransactions([{
-        ...transactionToInsert,
+        type: transactionData.type,
         amount: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : parseFloat(transactionData.amount),
-        savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0,
+        description: transactionData.description,
+        category: transactionData.category,
+        date: transactionDateTime,
+        savings: transactionData.type === 'savings' ? parseFloat(transactionData.savings) : 0
       }, ...transactions]);
     }
 
+    // Reset transaction data
     setTransactionData({
       type: 'expense',
       amount: '',
@@ -486,9 +406,9 @@ const FinanceTracker = () => {
 
     setShowAddTransaction(false);
     setErrorMessage('');
-    await fetchLoans(session.user.id);
     await fetchTransactions();
   };
+
 
   const handleAddMonthlyGoal = async (e) => {
     e.preventDefault();
@@ -661,7 +581,6 @@ const FinanceTracker = () => {
   const calculateStats = () => {
     const currentDate = new Date();
     let filterMonth, filterYear;
-
     if (viewPeriod === 'monthly') {
       const selectedDate = new Date(selectedMonth);
       filterMonth = selectedDate.getMonth();
@@ -716,7 +635,6 @@ const FinanceTracker = () => {
   const calculateGoalProgress = (goal) => {
     const goalAmount = goal.amount;
     const goalDate = new Date(goal.target_date);
-
     const savingsTransactions = transactions.filter(transaction => {
       const transactionDate = new Date(transaction.date);
       return transaction.type === 'savings' && transactionDate <= goalDate;
@@ -821,7 +739,7 @@ const FinanceTracker = () => {
             amount: 0,
             savings: stats.balance,
             description: 'End of month savings',
-            date: new Date().toISOString().split('T')[0],
+            date: new Date().toISOString(),
             user_id: session.user.id,
           }]);
 
@@ -833,7 +751,7 @@ const FinanceTracker = () => {
             amount: 0,
             savings: stats.balance,
             description: 'End of month savings',
-            date: new Date().toISOString().split('T')[0],
+            date: new Date().toISOString(),
           }, ...transactions]);
         }
       }
@@ -1187,7 +1105,6 @@ const FinanceTracker = () => {
                   </div>
                 )}
               </div>
-
             </>
           )}
           {viewPeriod === 'monthly' && (
@@ -1715,6 +1632,15 @@ const FinanceTracker = () => {
                 className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white focus:outline-none focus:ring-2 focus:ring-white/30"
                 required
               />
+              {transactionData.date !== new Date().toISOString().split('T')[0] && (
+                <input
+                  type="time"
+                  placeholder="Time"
+                  value={transactionData.time}
+                  onChange={(e) => setTransactionData({ ...transactionData, time: e.target.value })}
+                  className="w-full px-4 py-3 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-white/30"
+                />
+              )}
               <div className="flex space-x-3">
                 <button
                   type="button"
