@@ -124,6 +124,20 @@ const FinanceTracker = () => {
   }
 
   useEffect(() => {
+    if (viewPeriod === 'monthly') {
+      const date = new Date(`${selectedMonth}-01`);
+      setSelectedDate(date.toISOString().split('T')[0]);
+    }
+  }, [selectedMonth, viewPeriod]);
+
+  useEffect(() => {
+    if (viewPeriod === 'yearly') {
+      const date = new Date(`${selectedYear}-01-01`);
+      setSelectedDate(date.toISOString().split('T')[0]);
+    }
+  }, [selectedYear, viewPeriod]);
+
+  useEffect(() => {
     const checkSession = async () => {
       const { data: { session } } = await supabase.auth.getSession();
       if (session) {
@@ -412,6 +426,29 @@ const FinanceTracker = () => {
             return;
           }
         }
+
+        // Add a transaction of type 'income' for taking a loan
+        const loanName = transactionData.personType === 'existing'
+          ? loans.find(loan => loan.id === parseInt(transactionData.loanId))?.name || 'Unknown'
+          : transactionData.loanName;
+
+        const { data: incomeTransaction, error: incomeError } = await supabase
+          .from('transactions')
+          .insert([{
+            type: 'income',
+            amount: loanAmount,
+            description: `Loan taken: ${loanName}`,
+            category: 'Loan',
+            date: loanDateTime,
+            user_id: session.user.id
+          }]);
+
+        if (incomeError) {
+          console.error('Error adding income transaction for loan:', incomeError);
+          setErrorMessage('Error adding income transaction for loan: ' + incomeError.message);
+          return;
+        }
+
       } else if (transactionData.loanAction === 'clear') {
         const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
         if (!selectedLoan) {
@@ -446,7 +483,27 @@ const FinanceTracker = () => {
           setErrorMessage('Error updating loan: ' + loanError.message);
           return;
         }
+
+        // Add a reverse 'income' transaction to negate the original loan
+        const { data: reverseIncome, error: reverseError } = await supabase
+          .from('transactions')
+          .insert([{
+            type: 'income',
+            amount: -clearAmount,
+            description: `Loan cleared: ${selectedLoan.name}`,
+            category: 'Loan',
+            date: loanDateTime,
+            user_id: session.user.id
+          }]);
+
+        if (reverseError) {
+          console.error('Error reversing income transaction for loan:', reverseError);
+          setErrorMessage('Error reversing income for loan: ' + reverseError.message);
+          return;
+        }
+
       }
+
       await fetchLoans(session.user.id);
     } else {
       // Handle other transaction types (income, expense, savings)
@@ -668,40 +725,43 @@ const FinanceTracker = () => {
   };
 
   const calculateStats = () => {
-    const currentDate = new Date();
-    let filterMonth, filterYear;
-    if (viewPeriod === 'monthly') {
-      const selectedDate = new Date(selectedMonth);
-      filterMonth = selectedDate.getMonth();
-      filterYear = selectedDate.getFullYear();
-    } else if (viewPeriod === 'yearly') {
-      filterMonth = null;
-      filterYear = parseInt(selectedYear);
-    } else {
-      const selectedDateObj = new Date(selectedDate);
-      filterMonth = selectedDateObj.getMonth();
-      filterYear = selectedDateObj.getFullYear();
-    }
+    const selectedDateObj = new Date(selectedDate);
+    const selectedMonthObj = new Date(`${selectedMonth}-01`);
+    const filterMonth = selectedMonthObj.getMonth();
+    const filterYear = selectedMonthObj.getFullYear();
+    const filterYearly = parseInt(selectedYear);
 
-    const filterByPeriod = (transaction, useDayFilter = false) => {
-      const transactionDate = new Date(transaction.date);
-      if (viewPeriod === 'daily' && useDayFilter) {
-        const selected = new Date(selectedDate);
-        return transactionDate.toDateString() === selected.toDateString();
-      } else if (viewPeriod === 'monthly') {
-        return transactionDate.getMonth() === filterMonth && transactionDate.getFullYear() === filterYear;
+    const filterByStatsPeriod = (transaction) => {
+      const date = new Date(transaction.date);
+      if (viewPeriod === 'monthly') {
+        return date.getMonth() === filterMonth && date.getFullYear() === filterYear;
       } else if (viewPeriod === 'yearly') {
-        return transactionDate.getFullYear() === filterYear;
+        return date.getFullYear() === filterYearly;
+      } else {
+        return (
+          date.getFullYear() === selectedDateObj.getFullYear() &&
+          date.getMonth() === selectedDateObj.getMonth()
+        );
       }
-      return true;
     };
 
-    const filteredTransactionsForStats = transactions.filter(transaction => filterByPeriod(transaction, false));
-    const income = filteredTransactionsForStats.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
-    const expenses = filteredTransactionsForStats.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
+    const filterByDailyPeriod = (transaction) => {
+      const date = new Date(transaction.date);
+      return date.toDateString() === selectedDateObj.toDateString();
+    };
+
+    // Stats: use month/year
+    const filteredStatsTransactions = transactions
+      .filter(t => filterByStatsPeriod(t) &&
+        !(t.description?.startsWith("Loan taken:") || t.description?.startsWith("Loan cleared:"))
+      );
+
+    const income = filteredStatsTransactions.filter(t => t.type === 'income').reduce((sum, t) => sum + t.amount, 0);
+    const expenses = filteredStatsTransactions.filter(t => t.type === 'expense').reduce((sum, t) => sum + t.amount, 0);
     const savings = transactions.filter(t => t.type === 'savings').reduce((sum, t) => sum + t.savings, 0);
     const balance = income - expenses;
 
+    // Loans: use month/year
     const loanTransactions = loans.flatMap(loan =>
       loan.loan_date.map((date, index) => ({
         id: `loan-${loan.id}-${index}`,
@@ -713,12 +773,21 @@ const FinanceTracker = () => {
         date: date,
         created_at: loan.loan_date[index]
       }))
-    ).filter(transaction => filterByPeriod(transaction, false));
+    ).filter(t => filterByStatsPeriod(t));
 
-    const filteredTransactionsForDisplay = [...filteredTransactionsForStats, ...loanTransactions].filter(transaction => filterByPeriod(transaction, true));
-    const filtered = filteredTransactionsForDisplay.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    // Daily list: use selectedDate
+    const filteredTransactionsForDisplay = [...filteredStatsTransactions, ...loanTransactions]
+      .filter(filterByDailyPeriod)
+      .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
 
-    return { income, expenses, savings, balance, loanBalance: calculateLoanBalance(), filtered };
+    return {
+      income,
+      expenses,
+      savings,
+      balance,
+      loanBalance: calculateLoanBalance(),
+      filtered: filteredTransactionsForDisplay
+    };
   };
 
   const calculateGoalProgress = (goal) => {
