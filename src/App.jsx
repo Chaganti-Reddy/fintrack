@@ -327,15 +327,17 @@ const FinanceTracker = () => {
 
   const handleAddTransaction = async (e) => {
     e.preventDefault();
-    const { data: { session } } = await supabase.auth.getSession();
-    if (!session) {
-      console.error('User is not authenticated');
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      console.error('Error getting session:', sessionError);
+      setErrorMessage('User is not authenticated');
       return;
     }
 
     const allowedTypes = ['income', 'expense', 'savings', 'loan'];
     if (!allowedTypes.includes(transactionData.type)) {
       console.error('Invalid transaction type');
+      setErrorMessage('Invalid transaction type');
       return;
     }
 
@@ -343,12 +345,10 @@ const FinanceTracker = () => {
       const loanBalance = calculateLoanBalance();
       const savingsAmount = parseFloat(transactionData.savings);
       const balanceAfterSavings = stats.balance - savingsAmount;
-
       if (balanceAfterSavings - loanBalance < 0) {
         setErrorMessage('You have loans to clear. Please clear them first to make savings.');
         return;
       }
-
       if (savingsAmount > stats.balance) {
         setErrorMessage('Savings amount should be less than the current balance.');
         return;
@@ -356,11 +356,101 @@ const FinanceTracker = () => {
     }
 
     if (transactionData.type === 'loan') {
-      // Handle loan logic here
-    } else {
-      // Construct the transaction date-time
-      const transactionDateTime = new Date(`${transactionData.date}T${transactionData.time || '00:00'}`).toISOString();
+      const loanDateTime = new Date(`${transactionData.date}T${transactionData.loanTime || '00:00'}`).toISOString();
+      const loanAmount = parseFloat(transactionData.amount);
 
+      if (transactionData.loanAction === 'take') {
+        if (transactionData.personType === 'new') {
+          // Insert a new loan
+          const { data: loanData, error: loanError } = await supabase
+            .from('loans')
+            .insert([{
+              user_id: session.user.id,
+              name: transactionData.loanName,
+              description: [transactionData.description],
+              total_amount: loanAmount,
+              remaining_amount: loanAmount,
+              loan_date: [loanDateTime],
+              transaction_amount: [loanAmount],
+              type: ['take']
+            }])
+            .select();
+
+          if (loanError) {
+            console.error('Error adding loan:', loanError);
+            setErrorMessage('Error adding loan: ' + loanError.message);
+            return;
+          }
+        } else {
+          // Update an existing loan
+          const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
+          if (!selectedLoan) {
+            setErrorMessage('Selected loan not found.');
+            return;
+          }
+
+          const updatedDescription = [...selectedLoan.description, transactionData.description];
+          const updatedTransactionAmount = [...selectedLoan.transaction_amount, loanAmount];
+          const updatedRemainingAmount = selectedLoan.remaining_amount + loanAmount;
+          const updatedLoanDate = [...selectedLoan.loan_date, loanDateTime];
+
+          const { error: loanError } = await supabase
+            .from('loans')
+            .update({
+              total_amount: updatedRemainingAmount,
+              remaining_amount: updatedRemainingAmount,
+              description: updatedDescription,
+              loan_date: updatedLoanDate,
+              transaction_amount: updatedTransactionAmount,
+              type: [...selectedLoan.type, 'take']
+            })
+            .eq('id', selectedLoan.id);
+
+          if (loanError) {
+            console.error('Error updating loan:', loanError);
+            setErrorMessage('Error updating loan: ' + loanError.message);
+            return;
+          }
+        }
+      } else if (transactionData.loanAction === 'clear') {
+        const selectedLoan = loans.find(loan => loan.id === parseInt(transactionData.loanId));
+        if (!selectedLoan) {
+          setErrorMessage('Selected loan not found.');
+          return;
+        }
+
+        const clearAmount = parseFloat(transactionData.amount);
+        if (clearAmount > selectedLoan.remaining_amount) {
+          setErrorMessage('Clear amount exceeds remaining loan amount.');
+          return;
+        }
+
+        const updatedDescription = [...selectedLoan.description, transactionData.description];
+        const updatedTransactionAmount = [...selectedLoan.transaction_amount, clearAmount];
+        const updatedRemainingAmount = selectedLoan.remaining_amount - clearAmount;
+        const updatedLoanDate = [...selectedLoan.loan_date, loanDateTime];
+
+        const { error: loanError } = await supabase
+          .from('loans')
+          .update({
+            remaining_amount: updatedRemainingAmount,
+            description: updatedDescription,
+            loan_date: updatedLoanDate,
+            transaction_amount: updatedTransactionAmount,
+            type: [...selectedLoan.type, 'clear']
+          })
+          .eq('id', selectedLoan.id);
+
+        if (loanError) {
+          console.error('Error updating loan:', loanError);
+          setErrorMessage('Error updating loan: ' + loanError.message);
+          return;
+        }
+      }
+      await fetchLoans(session.user.id);
+    } else {
+      // Handle other transaction types (income, expense, savings)
+      const transactionDateTime = new Date(`${transactionData.date}T${transactionData.time || '00:00'}`).toISOString();
       const { data, error } = await supabase
         .from('transactions')
         .insert([{
@@ -408,7 +498,6 @@ const FinanceTracker = () => {
     setErrorMessage('');
     await fetchTransactions();
   };
-
 
   const handleAddMonthlyGoal = async (e) => {
     e.preventDefault();
@@ -1227,7 +1316,7 @@ const FinanceTracker = () => {
                       </div>
                       <div>
                         <p className="text-white font-medium">{loan.name}</p>
-                        <p className="text-white/70 text-sm">{loan.description.join(', ')}</p>
+                        {/* <p className="text-white/70 text-sm">{loan.description.join(', ')}</p> */}
                       </div>
                     </div>
                     <p className="text-yellow-400 font-medium">
